@@ -63,3 +63,6 @@ target/
 # Matlab
 *.m
 
+/.project
+/.pydevproject
+/.idea/

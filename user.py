@@ -8,6 +8,9 @@ import threading
 import logging
 import sys
 
+#sys.path.insert(0, '/home/tonnius/Git/OpenBCI_Python/plugins')
+
+
 logging.basicConfig(level=logging.ERROR)
 
 from yapsy.PluginManager import PluginManager
@@ -35,7 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-filtering', dest='filtering',
                         action='store_false',
                         help="Disable notch filtering")
-    parser.set_defaults(filtering=True)
+    parser.set_defaults(filtering=False)
     parser.add_argument('-d', '--daisy', dest='daisy',
                         action='store_true',
                         help="Force daisy mode (cyton board)")
@@ -73,7 +76,7 @@ if __name__ == '__main__':
         args.port = None
     else:
         print("Port: ", args.port)
-    
+
     plugins_paths = ["plugins"]
     if args.plugins_path:
         plugins_paths += args.plugins_path
@@ -234,11 +237,11 @@ https://github.com/OpenBCI/OpenBCI_Python")
                             try:
                                 boardThread.start()
                             except:
-                                    raise
+                                raise
                         else:
                             print ("No function loaded")
                         rec = True
-                    
+
                 elif("start" in s):
                     board.setImpedance(False)
                     if(fun != None):
@@ -248,7 +251,7 @@ https://github.com/OpenBCI/OpenBCI_Python")
                         try:
                             boardThread.start()
                         except:
-                                raise
+                            raise
                     else:
                         print ("No function loaded")
                     rec = True
@@ -276,16 +279,16 @@ https://github.com/OpenBCI/OpenBCI_Python")
             time.sleep(0.1) #Wait to see if the board has anything to report
             # The Cyton nicely return incoming packets -- here supposedly messages -- whereas the Ganglion prints incoming ASCII message by itself
             if board.getBoardType() == "cyton":
-              while board.ser_inWaiting():
-                  c = board.ser_read().decode('utf-8', errors='replace') # we're supposed to get UTF8 text, but the board might behave otherwise
-                  line += c
-                  time.sleep(0.001)
-                  if (c == '\n') and not flush:
-                      print('%\t'+line[:-1])
-                      line = ''
+                while board.ser_inWaiting():
+                    c = board.ser_read().decode('utf-8', errors='replace') # we're supposed to get UTF8 text, but the board might behave otherwise
+                    line += c
+                    time.sleep(0.001)
+                    if (c == '\n') and not flush:
+                        print('%\t'+line[:-1])
+                        line = ''
             elif board.getBoardType() == "ganglion":
-                  while board.ser_inWaiting():
-                      board.waitForNotifications(0.001)
+                while board.ser_inWaiting():
+                    board.waitForNotifications(0.001)
 
             if not flush:
                 print(line)
@@ -295,4 +298,7 @@ https://github.com/OpenBCI/OpenBCI_Python")
         if sys.hexversion > 0x03000000:
             s = input('--> ')
         else:
-            s = raw_input('--> ')
+            try:
+                s = raw_input('--> ')
+            except ValueError:
+                s = "/exit"
