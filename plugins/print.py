@@ -1,70 +1,128 @@
 import plugin_interface as plugintypes
+
 import numpy as np
-from scipy.signal import lfilter, butter
+from scipy.signal import lfilter, butter, lfilter_zi
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+import time
+import timeit
+from threading import Thread
+
+import cPickle as pickle
+
+from lasagne import layers
+from lasagne.updates import nesterov_momentum
+from nolearn.lasagne import NeuralNet
+from lasagne.objectives import aggregate, binary_crossentropy
+import theano
+
+#import sys
+#sys.path.append('/home/tonnius/Git/maka/code/')
+#from training import AdjustVariable
+
+nrOfSamples = 128
+
 
 def butter_bandpass(lowcut, highcut, fs, order):
     nyq = 0.5 * fs
     cutoff = [lowcut / nyq, highcut / nyq]
     b, a = butter(order, cutoff, btype="bandpass")
-    return b, a	
-
-class PluginPrint(plugintypes.IPluginExtended):
+    return b, a
+def butter_bandstop(lowcut, highcut, fs, order):
+    nyq = 0.5 * fs
+    cutoff = [lowcut / nyq, highcut / nyq]
+    b, a = butter(order, cutoff, btype="bandstop")
+    return b, a
+class Plotter(Thread):
     def __init__(self):
-        self.dataBuffY_uV = np.zeros((16,32))
-        self.yLittleBuff_uV = []
-        self.dataBuffY_filtY_uV = np.empty((16,32))
+        Thread.__init__(self)
+        print "Plotter activated"
+        self.inputBuff = np.zeros((nrOfSamples,16))
+        self.polling_interval = 1
+        fname_pretrain = "/home/tonnius/Git/maka/code/net.pickle"
+        with open(fname_pretrain, 'rb') as f:
+            self.net_pretrain = pickle.load(f)
+        
+    def run(self):
+        while True:
+            asArray = np.stack([xi for xi in self.inputBuff])
+            reshapedDataTest = asArray.reshape((-1, 1, 16, 16))
+            reshapedDataTest = reshapedDataTest.astype(np.float32)
+            #print("X.shape == {}; X.min == {:.3f}; X.max == {:.3f}".format(
+                #reshapedDataTest.shape, reshapedDataTest.min(), reshapedDataTest.max()))  
+            pred = self.net_pretrain.predict(reshapedDataTest)
+            
+            sample_string = "%s\n" % (str(pred))
+            #print "---------------------------------"
+            print sample_string
+            print "---------------------------------"        
+    
+
+            time.sleep(self.polling_interval)
+            
+class PluginPrint(plugintypes.IPluginExtended):
+    #def __init__(self):
+    
+    def activate(self):
+        
+        self.dataBuff_uV = np.zeros((nrOfSamples,16))
+        self.dataBuff_filt_uV = np.zeros((nrOfSamples,16))
+        self.firstDataPoint = True
         fs = 125
         order = 4
-        lowcut = 1
+        lowcut = 5
         highcut = 50
-        nyq = 0.5 * fs
-        cutoff = [lowcut / nyq, highcut / nyq]
-        self.b, self.a = butter(order, cutoff, btype="bandpass")
+        #nyq = 0.5 * fs
+        #cutoff = [lowcut / nyq, highcut / nyq]
         self.b, self.a = butter_bandpass(lowcut, highcut, fs, order)
+        self.zi = lfilter_zi(self.b, self.a)
+        
+        self.b2, self.a2 = butter_bandstop(49.5, 50.5, fs, 2) #50Hz
+        fig, axes = plt.subplots(16,1)
+        
+        lines = []
+        
+        for i in range(0, len(axes)):
+            axes[i].set_ylim([-200, 200])
+            lines.append(axes[i].plot(np.transpose(self.dataBuff_filt_uV)[i]))
+            
+        lines = np.squeeze(lines)
+        plt.ion()
+        def animate(i):
+            for k in range(0, len(axes)):
+                lines[k].set_ydata(np.transpose(self.dataBuff_filt_uV)[k])
+            return [line for line in lines]
+        
+        ani = animation.FuncAnimation(fig, animate, np.arange(0, 128),
+            interval=25, blit = True)
+        plt.show()                
 
-
-
-    def activate(self):
+        self.plottr = Plotter()
+        self.plottr.daemon = True
+        
         print "Print activated"
-
-    def filterIIR(self, filt_b, filt_a, data):
-        Nback = len(filt_b)
-        prev_y = []
-        prev_x = [] 
-        for i in range (0, len(data)):
-            for j in range (Nback-1, 0):
-                prev_y[j] = prev_y[j - 1]
-                prev_x[j] = prev_x[j - 1]
-        prev_x[0] = data[i]
-        out = 0
-        for j in range(0, Nback):
-            out += filt_b[j] * prev_x[j]
-            if (j > 0):
-                out -= filt_a[j] * prev_y[j]
-        prev_y[0] = out
-        data[i] = out
 
     # called with each new sample
     def __call__(self, sample):
         if sample:
-            #dataBuffLen = len(self.dataBuffY_uV)
-            #sampleLen = len(sample.channel_data)
-
-            #b = [
-                #2.001387256580675e-001, 0.0, -4.002774513161350e-001, 0.0, 2.001387256580675e-001]
-            #a = [1.0, -2.355934631131582e+000, 1.941257088655214e+000, -7.847063755334187e-001, 1.999076052968340e-001]
-
-            #for i in range (0, sampleLen):
-                #self.dataBuffY_uV[i] = np.roll(self.dataBuffY_uV[i], -1)
-                #self.dataBuffY_uV[i][-1] = sample.channel_data[i]
-                #self.dataBuffY_filtY_uV[i] = lfilter(self.b, self.a, self.dataBuffY_uV[i])
-
-            sample_string = "ID: %f\n%s\n%s" %(sample.id, str(self.dataBuffY_filtY_uV[0])[1:-1], str(sample.aux_data)[1:-1])
-            print "---------------------------------"
-            print sample_string
-            print "---------------------------------"
-
-        
+            if self.firstDataPoint == True:
+                self.firstDataPoint = False #because of averaging, first point is garbage
+                self.plottr.start()
+            else:
+                self.dataBuff_uV = np.roll(self.dataBuff_uV, -1, axis=0)
+                self.dataBuff_uV[-1] = sample.channel_data
+                
+                #dataBuffTemp = np.transpose(self.dataBuff_uV)
+                
+                dataBuff_filtered, zf = lfilter(self.b, self.a, self.dataBuff_uV, axis=0, zi=np.ones((8,16))*self.zi[:,None]*self.dataBuff_uV[0])
+                self.dataBuff_filt_uV = lfilter(self.b2, self.a2, dataBuff_filtered, axis=0)
+                self.plottr.inputBuff = self.dataBuff_filt_uV
+                sample_string = "%s\n" % (str(np.std(np.transpose(self.dataBuff_filt_uV)[0])))
+                #print "---------------------------------"
+                #print sample_string
+                #print "---------------------------------"        
 
         # DEBBUGING
         # try:

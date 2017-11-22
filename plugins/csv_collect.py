@@ -12,7 +12,7 @@ RECORDING_LENGTH = TRAINING_LENGTH + EXTRA_RECORDING_TIME
 RANDOM_PAUSE_MIN = 4 - EXTRA_RECORDING_TIME #must be positive
 RANDOM_PAUSE_MAX = RANDOM_PAUSE_MIN + 4 #must be positive
 
-trainingDirections = [1,2,3,4] * 5 #1 - left, 2 - right, 3 - up, 4 - down, 0 - base (no action)
+trainingDirections = [1,2,3,4] * 5 #1 - left (hand), 2 - right (hand), 3 - up (tongue), 4 - down (right foot), 0 - base (no action)
 
 def print_arrow():
     if not trainingDirections:
