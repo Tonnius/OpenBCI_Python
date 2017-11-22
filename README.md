@@ -17,7 +17,7 @@ OpenBCI 8 and 32 bit board with 8 or 16 channels.
 
 This library includes the main open_bci_v3 class definition that instantiates an OpenBCI Board object. This object will initialize communication with the board and get the environment ready for data streaming. This library is designed to work with iOS and Linux distributions. To use a Windows OS, change the __init__ function in open_bci_v3.py to establish a serial connection in Windows.
 
-For additional details on connecting your board visit: http://docs.openbci.com/tutorials/01-GettingStarted
+For additional details on connecting your Cyton board visit: http://docs.openbci.com/Hardware/02-Cyton
 
 ### Ganglion Board
 
@@ -143,6 +143,14 @@ NOTES:
 
 When writing to the board and expecting a response, give the board a second. It sometimes lags and requires
 the user to hit enter on the user.py script until you get a response.
+
+#### Ganglion
+
+The Ganglion board is currently supported only on Linux. The communication is made directly through bluetooth (BLE), instead of using a dongle through a serial port. To launch the script, auto-detect the bluetooth MAC address of the nearby board and print values upon `/start`:
+
+> $sudo python user.py --board ganglion --add print
+
+Note that if you want to configure manually the board, the API differs from the Cyton, refer to the proper documentation, i.e. http://docs.openbci.com/OpenBCI%20Software/06-OpenBCI_Ganglion_SDK
 
 ### Plugins
 
