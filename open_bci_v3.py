@@ -27,6 +27,7 @@ import threading
 import sys
 import pdb
 import glob
+import math
 
 SAMPLE_RATE = 250.0  # Hz
 START_BYTE = 0xA0  # start of data packet
@@ -96,7 +97,7 @@ class OpenBCIBoard(object):
     self.scaling_output = scaled_output
     self.eeg_channels_per_sample = 8 # number of EEG channels per sample *from the board*
     self.aux_channels_per_sample = 3 # number of AUX channels per sample *from the board*
-    self.imp_channels_per_sample = 0 # impedance check not supported at the moment
+    self.imp_channels_per_sample = 8 # number of IMP channels per sample *from the board*
     self.read_state = 0
     self.daisy = daisy
     self.last_odd_sample = OpenBCISample(-1, [], []) # used for daisy
@@ -108,15 +109,51 @@ class OpenBCIBoard(object):
 
     #Disconnects from board when terminated
     atexit.register(self.disconnect)
+    
+    #Impedance variables
+    self.impEnabled = False
+    self.impChannelSettings = []
+    nrChannels = self.getNbEEGChannels()
+    for i in range(nrChannels):
+      self.impChannelSettings.append([False, False])
+    self.openBCI_series_resistor_ohms = 2200
+    self.leadOffDrive_amps = 6.0e-9
+    
+    #1 sec data buffer (used for impedance calculation at the moment)
+    self.dataBuff_uV = np.zeros((nrChannels, int(self.getSampleRate())))
 
+    
   def getBoardType(self):
     """ Returns the version of the board """
     return self.board_type
-  
+
+  def setChannelImpedance(self, channel, p_ON, n_ON):
+    interval = 0.1 #need to test for proper value
+
+    self.ser.write(b'z')
+    time.sleep(interval)
+    self.ser.write(str(channel))
+    time.sleep(interval)
+    self.ser.write(b'1' if bool(p_ON) == True else b'0')
+    time.sleep(interval)
+    self.ser.write(b'1' if bool(n_ON) == True else b'0')
+    time.sleep(interval)
+    self.ser.write(b'Z')
+    
+    self.impChannelSettings[channel - 1] = [bool(p_ON), bool(n_ON)]
+    
+    #Debugging:
+    print "wrote imp: ch " + str(channel) + ", p " + \
+    str(b'1' if bool(p_ON) == True else b'0') + ", n " + \
+    str(b'1' if bool(n_ON) == True else b'0')
+
   def setImpedance(self, flag):
-    """ Enable/disable impedance measure. Not implemented at the moment on Cyton. """
-    return
-  
+    """ Enable/disable impedance measure. By default, enables for all N channel inputs"""
+    nrChannels = self.getNbEEGChannels()
+    for i in range(1, nrChannels + 1):
+      self.setChannelImpedance(i, False , True if bool(flag) == True else False)
+    self.impEnabled = True if bool(flag) else False
+
   def ser_write(self, b):
     """Access serial port object for write""" 
     self.ser.write(b)
@@ -128,25 +165,43 @@ class OpenBCIBoard(object):
   def ser_inWaiting(self):
     """Access serial port object for inWaiting""" 
     return self.ser.inWaiting();
-    
+
   def getSampleRate(self):
     if self.daisy:
       return SAMPLE_RATE/2
     else:
       return SAMPLE_RATE
-  
+
   def getNbEEGChannels(self):
     if self.daisy:
       return self.eeg_channels_per_sample*2
     else:
       return self.eeg_channels_per_sample
-  
+
   def getNbAUXChannels(self):
-    return  self.aux_channels_per_sample
+    return self.aux_channels_per_sample
 
   def getNbImpChannels(self):
-    return  self.imp_channels_per_sample
+    if self.daisy:
+      return self.imp_channels_per_sample*2
+    else:
+      return self.imp_channels_per_sample
 
+  def calcImpedance(self):
+    imp_data = []
+    for i in range(self.getNbImpChannels()):
+      impTemp = (math.sqrt(2.0) * np.std(self.dataBuff_uV[i]) * 1.0e-6) / self.leadOffDrive_amps
+      impTemp -= self.openBCI_series_resistor_ohms
+      if impTemp < 0:
+        impTemp = 0
+      imp_data.append(impTemp)
+    return imp_data
+  
+  def addDataToBuff(self, sample):
+    if len(sample.channel_data) == self.getNbEEGChannels():
+      self.dataBuff_uV = np.roll(self.dataBuff_uV, -1, axis=1)
+      self.dataBuff_uV[:,-1] = sample.channel_data    
+  
   def start_streaming(self, callback, lapse=-1):
     """
     Start handling streaming data from the board. Call a provided callback
@@ -165,7 +220,7 @@ class OpenBCIBoard(object):
     # Enclose callback funtion in a list if it comes alone
     if not isinstance(callback, list):
       callback = [callback]
-    
+
 
     #Initialize check connection
     self.check_connection()
@@ -184,18 +239,24 @@ class OpenBCIBoard(object):
           # the aux data will be the average between the two samples, as the channel samples themselves have been averaged by the board
           avg_aux_data = list((np.array(sample.aux_data) + np.array(self.last_odd_sample.aux_data))/2)
           whole_sample = OpenBCISample(sample.id, sample.channel_data + self.last_odd_sample.channel_data, avg_aux_data)
+          if self.impEnabled:
+            self.addDataToBuff(whole_sample)
+            whole_sample.imp_data = self.calcImpedance()
           for call in callback:
             call(whole_sample)
       else:
+        if self.impEnabled:
+          self.addDataToBuff(sample)
+          sample.imp_data = self.calcImpedance()
         for call in callback:
           call(sample)
-      
+
       if(lapse > 0 and timeit.default_timer() - start_time > lapse):
         self.stop();
       if self.log:
         self.log_packet_count = self.log_packet_count + 1;
-  
-  
+
+    
   """
     PARSER:
     Parses incoming data packet into OpenBCISample.
@@ -220,9 +281,9 @@ class OpenBCIBoard(object):
 
       #---------Start Byte & ID---------
       if self.read_state == 0:
-        
+
         b = read(1)
-        
+
         if struct.unpack('B', b)[0] == START_BYTE:
           if(rep != 0):
             self.warn('Skipped %d bytes before start found' %(rep))
@@ -259,7 +320,7 @@ class OpenBCIBoard(object):
             channel_data.append(myInt*scale_fac_uVolts_per_count)
           else:
             channel_data.append(myInt)
-
+          
         self.read_state = 2;
 
       #---------Accelerometer Data---------
@@ -274,9 +335,10 @@ class OpenBCIBoard(object):
           if self.scaling_output:
             aux_data.append(acc*scale_fac_accel_G_per_count)
           else:
-              aux_data.append(acc)
+            aux_data.append(acc)
 
         self.read_state = 3;
+          
       #---------End Byte---------
       elif self.read_state == 3:
         val = struct.unpack('B', read(1))[0]
@@ -288,10 +350,10 @@ class OpenBCIBoard(object):
           return sample
         else:
           self.warn("ID:<%d> <Unexpected END_BYTE found <%s> instead of <%s>"      
-            %(packet_id, val, END_BYTE))
+                    %(packet_id, val, END_BYTE))
           logging.debug(log_bytes_in);
           self.packets_dropped = self.packets_dropped + 1
-  
+
   """
 
   Clean Up (atexit)
@@ -311,7 +373,7 @@ class OpenBCIBoard(object):
       print("Closing Serial...")
       self.ser.close()
       logging.warning('serial closed')
-       
+
 
   """
 
@@ -338,11 +400,11 @@ class OpenBCIBoard(object):
     line = ''
     #Wait for device to send data
     time.sleep(1)
-    
+
     if self.ser.inWaiting():
       line = ''
       c = ''
-     #Look for end sequence $$$
+    #Look for end sequence $$$
       while '$$$' not in line:
         c = self.ser.read().decode('utf-8', errors='replace') # we're supposed to get UTF8 text, but the board might behave otherwise
         line += c
@@ -359,11 +421,11 @@ class OpenBCIBoard(object):
     line = ''
     #Wait for device to send data
     time.sleep(2)
-    
+
     if serial.inWaiting():
       line = ''
       c = ''
-     #Look for end sequence $$$
+    #Look for end sequence $$$
       while '$$$' not in line:
         c = serial.read().decode('utf-8', errors='replace') # we're supposed to get UTF8 text, but the board might behave otherwise
         line += c
@@ -390,7 +452,7 @@ class OpenBCIBoard(object):
   def print_packets_in(self):
     while self.streaming:
       b = struct.unpack('B', self.ser.read())[0];
-      
+
       if b == START_BYTE:
         self.attempt_reconnect = False
         if skipped_str:
@@ -400,7 +462,7 @@ class OpenBCIBoard(object):
         packet_str = "%03d"%(b) + '|';
         b = struct.unpack('B', self.ser.read())[0];
         packet_str = packet_str + "%03d"%(b) + '|';
-        
+
         #data channels
         for i in range(24-1):
           b = struct.unpack('B', self.ser.read())[0];
@@ -413,26 +475,26 @@ class OpenBCIBoard(object):
         for i in range(6-1):
           b = struct.unpack('B', self.ser.read())[0];
           packet_str = packet_str + '.' + "%03d"%(b);
-        
+
         b = struct.unpack('B', self.ser.read())[0];
         packet_str = packet_str + '.' + "%03d"%(b) + '|';
 
         #end byte
         b = struct.unpack('B', self.ser.read())[0];
-        
+
         #Valid Packet
         if b == END_BYTE:
           packet_str = packet_str + '.' + "%03d"%(b) + '|VAL';
           print(packet_str)
           #logging.debug(packet_str)
-        
+
         #Invalid Packet
         else:
           packet_str = packet_str + '.' + "%03d"%(b) + '|INV';
           #Reset
           self.attempt_reconnect = True
-          
-      
+
+
       else:
         print(b)
         if b == END_BYTE:
@@ -444,7 +506,7 @@ class OpenBCIBoard(object):
         self.last_reconnect = timeit.default_timer()
         self.warn('Reconnecting')
         self.reconnect()
- 
+
 
 
   def check_connection(self, interval = 2, max_packets_to_skip=10):

@@ -67,3 +67,7 @@ target/
 .idea/*
 .idea/codeStyleSettings.xml
 .idea/vcs.xml
+
+\.pydevproject
+
+\.project

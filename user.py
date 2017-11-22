@@ -8,9 +8,6 @@ import threading
 import logging
 import sys
 
-#sys.path.insert(0, '/home/tonnius/Git/OpenBCI_Python/plugins')
-
-
 logging.basicConfig(level=logging.ERROR)
 
 from yapsy.PluginManager import PluginManager
@@ -76,7 +73,7 @@ if __name__ == '__main__':
         args.port = None
     else:
         print("Port: ", args.port)
-
+    
     plugins_paths = ["plugins"]
     if args.plugins_path:
         plugins_paths += args.plugins_path
@@ -226,22 +223,19 @@ https://github.com/OpenBCI/OpenBCI_Python")
                     lapse = -1
 
                 if('startimp' in s):
-                    if board.getBoardType() == "cyton":
-                        print ("Impedance checking not supported on cyton.")
-                    else:
-                        board.setImpedance(True)
-                        if(fun != None):
-                            # start streaming in a separate thread so we could always send commands in here
-                            boardThread = threading.Thread(target=board.start_streaming, args=(fun, lapse))
-                            boardThread.daemon = True # will stop on exit
-                            try:
-                                boardThread.start()
-                            except:
+                    board.setImpedance(True)
+                    if(fun != None):
+                        # start streaming in a separate thread so we could always send commands in here
+                        boardThread = threading.Thread(target=board.start_streaming, args=(fun, lapse))
+                        boardThread.daemon = True # will stop on exit
+                        try:
+                            boardThread.start()
+                        except:
                                 raise
-                        else:
-                            print ("No function loaded")
-                        rec = True
-
+                    else:
+                        print ("No function loaded")
+                    rec = True
+                    
                 elif("start" in s):
                     board.setImpedance(False)
                     if(fun != None):
@@ -251,7 +245,7 @@ https://github.com/OpenBCI/OpenBCI_Python")
                         try:
                             boardThread.start()
                         except:
-                            raise
+                                raise
                     else:
                         print ("No function loaded")
                     rec = True
@@ -279,16 +273,16 @@ https://github.com/OpenBCI/OpenBCI_Python")
             time.sleep(0.1) #Wait to see if the board has anything to report
             # The Cyton nicely return incoming packets -- here supposedly messages -- whereas the Ganglion prints incoming ASCII message by itself
             if board.getBoardType() == "cyton":
-                while board.ser_inWaiting():
-                    c = board.ser_read().decode('utf-8', errors='replace') # we're supposed to get UTF8 text, but the board might behave otherwise
-                    line += c
-                    time.sleep(0.001)
-                    if (c == '\n') and not flush:
-                        print('%\t'+line[:-1])
-                        line = ''
+              while board.ser_inWaiting():
+                  c = board.ser_read().decode('utf-8', errors='replace') # we're supposed to get UTF8 text, but the board might behave otherwise
+                  line += c
+                  time.sleep(0.001)
+                  if (c == '\n') and not flush:
+                      print('%\t'+line[:-1])
+                      line = ''
             elif board.getBoardType() == "ganglion":
-                while board.ser_inWaiting():
-                    board.waitForNotifications(0.001)
+                  while board.ser_inWaiting():
+                      board.waitForNotifications(0.001)
 
             if not flush:
                 print(line)
@@ -298,7 +292,4 @@ https://github.com/OpenBCI/OpenBCI_Python")
         if sys.hexversion > 0x03000000:
             s = input('--> ')
         else:
-            try:
-                s = raw_input('--> ')
-            except ValueError:
-                s = "/exit"
+            s = raw_input('--> ')
